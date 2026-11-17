@@ -1,0 +1,32 @@
+# Root image (Next.js app) build context - the app image needs only:
+# src, public, prisma, package.json, bun.lock, configs.
+
+node_modules
+.next
+db
+db/*.db
+
+# dev artifacts
+dev.log
+server.log
+*.log
+__pycache__
+
+# secrets
+.env
+!.env.example
+
+# sub-project images (they have their own Dockerfiles/contexts)
+collector
+gateways
+
+# workspace extras not needed inside the app image
+.git
+tests
+examples
+mini-services
+skills
+upload
+download
+tool-results
+Caddyfile

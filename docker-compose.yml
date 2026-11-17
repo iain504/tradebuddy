@@ -1,0 +1,109 @@
+# ============================================================================
+# mt-monitor - docker compose
+#
+# SECURITY - READ BEFORE EXPOSING ANYTHING:
+#   * NEVER expose /api/collect/accounts publicly. It returns account logins
+#     with DECRYPTED investor passwords (behind X-Ingest-Token, which must stay
+#     a server-side secret). Put the whole UI behind a reverse proxy with
+#     authentication (basic auth, SSO, Tailscale/WireGuard VPN, ...).
+#   * Use strong, unique ENCRYPTION_KEY and INGEST_TOKEN values (see .env.example).
+#   * Collector (/sync, /test) and gateways have no browser-facing auth - keep
+#     them on the internal compose network; do not publish their ports unless
+#     you front them with auth.
+#   * Investor (read-only) passwords are mandatory for accounts you add:
+#     the gateways could place trades with master passwords.
+# ============================================================================
+
+services:
+  # ------------------------------------------------------------------ app ---
+  app:
+    build: .
+    image: mt-monitor-app
+    environment:
+      DATABASE_URL: file:/data/monitor.db
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (see .env.example)}
+      INGEST_TOKEN: ${INGEST_TOKEN:?Set INGEST_TOKEN in .env (see .env.example)}
+      POLL_MINUTES: ${POLL_MINUTES:-5}
+      COLLECTOR_URL: http://collector:8000
+      APP_URL: http://app:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - appdata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+  # ------------------------------------------------------------ collector ---
+  collector:
+    build: ./collector
+    image: mt-monitor-collector
+    environment:
+      APP_URL: http://app:3000
+      INGEST_TOKEN: ${INGEST_TOKEN:?Set INGEST_TOKEN in .env (see .env.example)}
+      POLL_MINUTES: ${POLL_MINUTES:-5}
+      MT4_GATEWAY_URL: ${MT4_GATEWAY_URL:-http://mt4-gateway:8001}
+      MT5_GATEWAY_URL: ${MT5_GATEWAY_URL:-http://mt5-gateway:8002}
+      COLLECTION_JITTER_SECONDS: ${COLLECTION_JITTER_SECONDS:-20}
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/health', timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+  # --------------------------------------------------------- mt4-gateway ---
+  # Wine + MT4 terminal + ZeroMQ bridge EA + Node app.
+  # One container serves ONE MT4 account (terminal limitation). The terminal,
+  # its login and the compiled EA persist in the mt4data volume; the first
+  # boot runs the one-time setup (downloads MT4, compiles the EA).
+  mt4-gateway:
+    build: ./gateways/mt4-gateway
+    image: mt-monitor-mt4-gateway
+    environment:
+      BRIDGE_API_KEY: ${MT4_BRIDGE_API_KEY:-change-me}
+      GATEWAY_LOGIN: ${MT4_GATEWAY_LOGIN:-}
+      MT4_LOGIN: ${MT4_LOGIN:-}
+      MT4_PASSWORD: ${MT4_PASSWORD:-}
+      MT4_SERVER: ${MT4_SERVER:-}
+      MT4_HISTORY_CMD: ${MT4_HISTORY_CMD:-}
+    volumes:
+      - mt4data:/opt/mt4
+    shm_size: 1gb
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  # --------------------------------------------------------- mt5-gateway ---
+  # Wine + official MT5 terminal + Windows Python FastAPI bridge.
+  # Connects accounts SEQUENTIALLY (one terminal); first image build ~10 min.
+  mt5-gateway:
+    build: ./gateways/mt5-gateway
+    image: mt-monitor-mt5-gateway
+    environment:
+      MT5_PRESTART: ${MT5_PRESTART:-true}
+      MT5_TERMINAL_PATH: "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+    volumes:
+      - mt5data:/opt/mt5
+    shm_size: 1gb
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  appdata:    # SQLite database (monitor.db) - BACK THIS UP
+  mt4data:    # wine prefix + MT4 terminal + bridge EA + login state
+  mt5data:    # wine prefix + MT5 terminal

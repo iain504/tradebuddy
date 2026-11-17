@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,20 +7,102 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Owner of trading accounts. Lightweight identity (no auth flows in v1) -
+// a personal/self-hosted monitor can add NextAuth later on top of this model.
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String    @id @default(cuid())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  accounts  Account[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// One MT4/MT5 trade account. Credentials are stored encrypted (AES-256-GCM).
+// Users should provide the INVESTOR (read-only) password.
+model Account {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform     String // "MT4" | "MT5"
+  brokerName   String
+  serverName   String? // broker server label, e.g. "ICMarketsSC-MT5"
+  serverHost   String? // resolved endpoint host (mainly needed for MT4 protocol gateways)
+  serverPort   Int?
+  login        String
+  passwordEnc  String // AES-256-GCM encrypted investor password
+  currency     String     @default("USD")
+  leverage     Int?
+  status       String     @default("PENDING") // PENDING | ACTIVE | ERROR | PAUSED
+  lastError    String?
+  lastSyncAt   DateTime?
+  demo         Boolean    @default(false)
+  backfillFrom DateTime   @default(now()) // collector: fetch history from here (all records)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  snapshots    Snapshot[]
+  trades       Trade[]
+  positions    Position[]
+
+  @@index([userId])
+}
+
+// Periodic account state time-series (one per sync cycle).
+model Snapshot {
+  id            String   @id @default(cuid())
+  accountId     String
+  account       Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  ts            DateTime
+  balance       Float
+  equity        Float
+  margin        Float    @default(0)
+  freeMargin    Float    @default(0)
+  marginLevel   Float?
+  floatingPnL   Float    @default(0)
+  openPositions Int      @default(0)
+
+  @@unique([accountId, ts])
+  @@index([accountId, ts])
+}
+
+// Normalized closed trade (MT4 closed order / MT5 deal pair joined by position id).
+model Trade {
+  id         String   @id @default(cuid())
+  accountId  String
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  positionId String
+  symbol     String
+  side       String // BUY | SELL
+  volume     Float // lots
+  openPrice  Float
+  closePrice Float
+  openTime   DateTime
+  closeTime  DateTime
+  profit     Float // raw floating part reported by terminal
+  commission Float    @default(0)
+  swap       Float    @default(0)
+  net        Float // profit + commission + swap
+  comment    String?
+
+  @@unique([accountId, positionId])
+  @@index([accountId, closeTime])
+}
+
+// Currently open positions (replaced on every sync).
+model Position {
+  id           String   @id @default(cuid())
+  accountId    String
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  positionId   String
+  symbol       String
+  side         String // BUY | SELL
+  volume       Float
+  openPrice    Float
+  currentPrice Float
+  openTime     DateTime
+  profit       Float
+  swap         Float    @default(0)
+  comment      String?
+
+  @@unique([accountId, positionId])
+  @@index([accountId])
 }

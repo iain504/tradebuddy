@@ -1,0 +1,6 @@
+# Installed with WINE's Windows Python (see Dockerfile):
+#   wine C:\Python311\python.exe -m pip install -r requirements-win.txt
+MetaTrader5>=5.0.45
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+pydantic>=2.6,<3

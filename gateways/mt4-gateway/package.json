@@ -1,0 +1,21 @@
+{
+  "name": "mt4-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MT4 gateway: Express API on top of a MetaTrader4 terminal running the MetaTrader4Bridge ZeroMQ EA (under Wine).",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "metatrader4": "^1.0.5",
+    "zeromq": "6.0.0-beta.19"
+  },
+  "comments": {
+    "zeromq": "Pinned to the exact version metatrader4@1.0.5 requires (it uses zeromq/v5-compat). If the native build fails on Node 20, install build tools (python3 make g++) - the Dockerfile does - or try an override to a newer 6.x."
+  }
+}
