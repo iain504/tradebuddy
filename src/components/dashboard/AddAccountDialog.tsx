@@ -40,6 +40,7 @@ import {
   api,
   type BrokerSearchResultDTO,
   type CreateAccountResultDTO,
+  type SrvCatalogEntryDTO,
   type SrvDecodeResultDTO,
 } from "@/components/dashboard/api";
 import type { AccountSummary, OwnerDTO, Platform, ResolvedEndpoint } from "@/lib/types";
@@ -94,9 +95,13 @@ export function AddAccountDialog({ open, onOpenChange, owners, onCreated }: Prop
   const [suggesting, setSuggesting] = useState(false);
   const brokerBoxRef = useRef<HTMLDivElement | null>(null);
 
-  // .srv file decoding
+  // .srv / servers.dat file decoding
   const [srvBusy, setSrvBusy] = useState(false);
+  const [srvPicking, setSrvPicking] = useState(false);
   const [srvResult, setSrvResult] = useState<{ name: string; endpoints: ResolvedEndpoint[] } | null>(null);
+  const [srvCatalog, setSrvCatalog] = useState<SrvCatalogEntryDTO[] | null>(null);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [srvFile, setSrvFile] = useState<File | null>(null);
   const [srvError, setSrvError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -117,6 +122,9 @@ export function AddAccountDialog({ open, onOpenChange, owners, onCreated }: Prop
       setSuggestions(null);
       setSuggestOpen(false);
       setSrvResult(null);
+      setSrvCatalog(null);
+      setCatalogQuery("");
+      setSrvFile(null);
       setSrvError(null);
     }
   }, [open]);
@@ -172,24 +180,61 @@ export function AddAccountDialog({ open, onOpenChange, owners, onCreated }: Prop
     setSuggestOpen(false);
   };
 
+  const decodeFile = async (file: File, server?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (server) fd.append("server", server);
+    const res = await fetch("/api/srv/decode", { method: "POST", body: fd });
+    const body = (await res.json()) as SrvDecodeResultDTO;
+    if (!res.ok || !body.ok) throw new Error(body.error ?? "Could not decode the file");
+    return body;
+  };
+
   const handleSrvFile = async (file: File) => {
     setSrvBusy(true);
     setSrvError(null);
     setSrvResult(null);
+    setSrvCatalog(null);
+    setCatalogQuery("");
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/srv/decode", { method: "POST", body: fd });
-      const body = (await res.json()) as SrvDecodeResultDTO;
-      if (!res.ok || !body.ok || !body.endpoints) {
-        throw new Error(body.error ?? "Could not decode the .srv file");
+      const body = await decodeFile(file);
+      if (body.kind === "servers-dat" && body.servers) {
+        setSrvFile(file);
+        setSrvCatalog(body.servers);
+        toast.info(
+          `${body.servers.length} servers found`,
+          { description: "Pick your broker from the list below." }
+        );
+      } else if (body.endpoints) {
+        setSrvResult({ name: body.name ?? "", endpoints: body.endpoints });
+      } else {
+        throw new Error("Could not decode the file");
       }
-      setSrvResult({ name: body.name ?? "", endpoints: body.endpoints });
     } catch (err) {
       setSrvError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setSrvBusy(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const pickCatalogServer = async (entry: SrvCatalogEntryDTO) => {
+    if (!srvFile) return;
+    setSrvPicking(true);
+    setSrvError(null);
+    try {
+      const body = await decodeFile(srvFile, entry.name);
+      if (!body.endpoints) throw new Error(body.error ?? "Could not decode the server entry");
+      setSrvResult({ name: body.name ?? entry.name, endpoints: body.endpoints });
+      setForm((f) => ({
+        ...f,
+        brokerName: entry.company || f.brokerName || entry.name,
+        serverName: entry.name,
+      }));
+    } catch (err) {
+      setSrvError(err instanceof Error ? err.message : "Decode failed");
+    } finally {
+      setSrvPicking(false);
     }
   };
 
@@ -411,12 +456,12 @@ export function AddAccountDialog({ open, onOpenChange, owners, onCreated }: Prop
                 </div>
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="add-srv">Server certificate (.srv file)</Label>
+                <Label htmlFor="add-srv">Server list file (.srv or servers.dat)</Label>
                 <input
                   ref={fileRef}
                   id="add-srv"
                   type="file"
-                  accept=".srv"
+                  accept=".srv,.dat"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -429,15 +474,82 @@ export function AddAccountDialog({ open, onOpenChange, owners, onCreated }: Prop
                   size="sm"
                   className="w-fit"
                   onClick={() => fileRef.current?.click()}
-                  disabled={srvBusy}
+                  disabled={srvBusy || srvPicking}
                 >
-                  {srvBusy ? (
+                  {srvBusy || srvPicking ? (
                     <Loader2 className="size-3.5 animate-spin" />
                   ) : (
                     <Upload className="size-3.5" />
                   )}
-                  Upload .srv file
+                  Upload .srv / servers.dat
                 </Button>
+                <p className="text-[11px] leading-relaxed text-zinc-500">
+                  Newer terminals only keep one aggregated file: MT4/MT5 menu
+                  File &rarr; Open Data Folder &rarr; config &rarr; servers.dat.
+                </p>
+                {srvCatalog && !srvResult && (
+                  <div className="grid gap-2 rounded-md border border-zinc-800 bg-zinc-900/40 p-2.5">
+                    <Input
+                      value={catalogQuery}
+                      onChange={(e) => setCatalogQuery(e.target.value)}
+                      placeholder="Filter servers..."
+                      className="h-8 text-xs"
+                      aria-label="Filter servers from servers.dat"
+                    />
+                    <ul
+                      role="listbox"
+                      aria-label="Servers found in servers.dat"
+                      className="ts-scroll max-h-60 overflow-y-auto"
+                    >
+                      {srvCatalog
+                        .filter((s) => {
+                          const q = catalogQuery.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            s.name.toLowerCase().includes(q) ||
+                            (s.company ?? "").toLowerCase().includes(q)
+                          );
+                        })
+                        .slice(0, 50)
+                        .map((s) => (
+                          <li key={s.name}>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={false}
+                              disabled={srvPicking}
+                              onClick={() => void pickCatalogServer(s)}
+                              className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                            >
+                              <span className="truncate">
+                                {s.name}
+                                {s.company && s.company !== s.name && (
+                                  <span className="ml-1.5 text-[10px] text-zinc-500">
+                                    {s.company}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                                {s.endpointCount} ep
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                    {srvCatalog.filter((s) => {
+                      const q = catalogQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        s.name.toLowerCase().includes(q) ||
+                        (s.company ?? "").toLowerCase().includes(q)
+                      );
+                    }).length > 50 && (
+                      <p className="text-[10px] text-zinc-500">
+                        Showing first 50 matches - refine the filter.
+                      </p>
+                    )}
+                  </div>
+                )}
                 {srvResult && (
                   <div className="rounded-md border border-emerald-400/20 bg-emerald-400/[0.05] p-2.5 text-xs">
                     <p className="flex items-center gap-1.5 font-medium text-emerald-300">

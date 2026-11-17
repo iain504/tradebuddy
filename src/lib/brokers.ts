@@ -110,6 +110,189 @@ export function decodeSrv(buf: Buffer): { name: string; endpoints: ResolvedEndpo
   return null;
 }
 
+// ------------------------------------------------------- servers.dat decode
+
+/**
+ * MT4/MT5 terminals cache the whole MetaQuotes broker index in
+ * `config\servers.dat` (newer builds no longer write one .srv per broker).
+ *
+ * Community reverse-engineered layout (validated against the terminal):
+ *  - 16-byte XOR-chain cipher, key below, `prev` resets to 0 for every block
+ *  - plaintext 428-byte header: i32 headerId @0 (503/504/505/506 seen so far),
+ *    i32 objectCount @140
+ *  - per server record:
+ *      ServerInfo  660 B encrypted (503/504) | ServerInfoEx 1716 B (505/506)
+ *        name UTF-16LE @0 (128 B), company @128 (256 B)
+ *      i32 accessCount, then per access:
+ *        AccessRec 356 B encrypted - port i32 @192
+ *        i32 addressCount, then per address:
+ *          AddressRec 148 B encrypted - host UTF-16LE @0 (128 B)
+ *      (505/506 only) i32 accessExCount, then per accessEx:
+ *        AccessRecEx 3160 B encrypted - host UTF-16LE @600 (256 B)
+ *        i32 addressExCount, then per addressEx:
+ *          AddressRecEx 1284 B encrypted - host UTF-16LE @4 (512 B)
+ * All counts are stored plaintext between the encrypted blocks.
+ */
+
+const DAT_XOR_KEY = Buffer.from([
+  65, 182, 127, 88, 56, 12, 240, 45, 123, 57, 8, 254, 33, 187, 65, 88,
+]);
+
+function datDecryptBlock(block: Buffer): Buffer {
+  const out = Buffer.alloc(block.length);
+  let prev = 0;
+  for (let i = 0; i < block.length; i++) {
+    const cur = block[i];
+    out[i] = (cur ^ ((prev + DAT_XOR_KEY[i & 0xf]) & 0xff)) & 0xff;
+    prev = cur;
+  }
+  return out;
+}
+
+function utf16At(buf: Buffer, offset: number, maxBytes: number): string {
+  const end = Math.min(offset + maxBytes, buf.length);
+  let stop = end;
+  for (let i = offset; i + 1 < end; i += 2) {
+    if (buf[i] === 0 && buf[i + 1] === 0) {
+      stop = i;
+      break;
+    }
+  }
+  return buf.subarray(offset, stop).toString("utf16le").replace(/\0+$/g, "").trim();
+}
+
+function plausibleHost(host: string): boolean {
+  if (!host || host.length < 3 || host.length > 253) return false;
+  if (!isPrintableHost(host)) return false;
+  // Must look like an IPv4 or a domain-ish name (dot separated labels).
+  return /^[\w\.\-]+$/.test(host) && host.includes(".");
+}
+
+/**
+ * Server names in the MetaQuotes index are international - CJK/Arabic/etc.
+ * are legitimate, so only reject names containing control characters (the
+ * signature of a misparse) or names without any letter/digit.
+ */
+function plausibleServerName(s: string): boolean {
+  if (!s || s.length > 128) return false;
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c < 0x20 || c === 0x7f) return false;
+  }
+  return /[\p{L}\p{N}]/u.test(s);
+}
+
+export interface DatServerEntry {
+  name: string;
+  company: string;
+  endpoints: ResolvedEndpoint[];
+}
+
+export function decodeServersDat(buf: Buffer): DatServerEntry[] | null {
+  try {
+    if (buf.length < 428 + 64) return null;
+    const headerId = buf.readInt32LE(0);
+    const isEx = headerId === 505 || headerId === 506;
+    const isPlain = headerId === 503 || headerId === 504;
+    if (!isEx && !isPlain) return null;
+
+    const objCount = buf.readInt32LE(140);
+    if (!Number.isInteger(objCount) || objCount <= 0 || objCount > 20000) return null;
+
+    const servers: DatServerEntry[] = [];
+    let pos = 428;
+    const i32 = () => {
+      const v = buf.readInt32LE(pos);
+      pos += 4;
+      return v;
+    };
+    const dec = (n: number) => {
+      const raw = buf.subarray(pos, pos + n);
+      pos += n;
+      return datDecryptBlock(raw);
+    };
+    const countOk = (v: number) => Number.isInteger(v) && v >= 0 && v <= 1000;
+
+    let garbageStreak = 0;
+    for (let s = 0; s < objCount; s++) {
+      const info = dec(isEx ? 1716 : 660);
+      if (info.length < (isEx ? 1716 : 660)) return null;
+      const name = utf16At(info, 0, 128);
+      const company = utf16At(info, 128, 256);
+      // A single odd record (e.g. a weird broker name) must not nuke a
+      // multi-thousand-server catalog; only bail on sustained garbage.
+      if (!plausibleServerName(name)) {
+        if (++garbageStreak >= 5) return null;
+        continue;
+      }
+      garbageStreak = 0;
+
+      const endpoints: ResolvedEndpoint[] = [];
+      const seen = new Set<string>();
+      const addEndpoint = (host: string, port: number) => {
+        if (!plausibleHost(host)) return;
+        const p = port > 0 && port <= 65535 ? port : 443;
+        const key = `${host}:${p}`;
+        if (!seen.has(key) && endpoints.length < 512) {
+          seen.add(key);
+          endpoints.push({ host, port: p });
+        }
+      };
+
+      const accessCount = i32();
+      if (!countOk(accessCount)) return null;
+      let primaryCount = 0;
+      for (let a = 0; a < accessCount; a++) {
+        const acc = dec(356);
+        if (acc.length < 356) return null;
+        const port = acc.readInt32LE(192);
+        const addrCount = i32();
+        if (!countOk(addrCount)) return null;
+        for (let d = 0; d < addrCount; d++) {
+          const addr = dec(148);
+          if (addr.length < 148) return null;
+          const host = utf16At(addr, 0, 128);
+          if (plausibleHost(host)) {
+            addEndpoint(host, port);
+            primaryCount++;
+          }
+        }
+      }
+
+      if (isEx) {
+        const exCount = i32();
+        if (!countOk(exCount)) return null;
+        let exCountAdded = 0;
+        for (let a = 0; a < exCount; a++) {
+          const ex = dec(3160);
+          if (ex.length < 3160) return null;
+          const exHost = utf16At(ex, 600, 256);
+          const addrExCount = i32();
+          if (!countOk(addrExCount)) return null;
+          for (let d = 0; d < addrExCount; d++) {
+            const addr = dec(1284);
+            if (addr.length < 1284) return null;
+            const host = utf16At(addr, 4, 512);
+            if (plausibleHost(host)) {
+              addEndpoint(host, 443);
+              exCountAdded++;
+            }
+          }
+          if (exCountAdded === 0 && primaryCount === 0 && plausibleHost(exHost)) {
+            addEndpoint(exHost, 443);
+          }
+        }
+      }
+
+      servers.push({ name, company, endpoints });
+    }
+
+    return servers.length > 0 ? servers : null;
+  } catch {
+    return null;
+  }
+}
+
 // ------------------------------------------------------- MetaQuotes index lookup
 
 interface MqEntry {

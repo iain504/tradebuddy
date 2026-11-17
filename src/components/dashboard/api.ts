@@ -26,10 +26,19 @@ export interface BrokerSearchResultDTO {
   note?: string;
 }
 
+export interface SrvCatalogEntryDTO {
+  name: string;
+  company?: string;
+  endpointCount: number;
+}
+
 export interface SrvDecodeResultDTO {
   ok: boolean;
+  kind?: "srv" | "servers-dat";
   name?: string;
   endpoints?: ResolvedEndpoint[];
+  /** Present when a servers.dat catalog was uploaded (no single server chosen yet). */
+  servers?: SrvCatalogEntryDTO[];
   error?: string;
 }
 
