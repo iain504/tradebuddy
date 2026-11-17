@@ -38,7 +38,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       method: "POST",
       headers: { "content-type": "application/json", "x-ingest-token": token },
       body: JSON.stringify({ accountId: id }),
-      signal: AbortSignal.timeout(10000),
+      // The collector may wait for a restarting terminal bridge before
+      // answering - allow more than the gateway's own bridge timeout.
+      signal: AbortSignal.timeout(35000),
     });
     const data = await res.json().catch(() => ({}));
     return json({ ok: res.ok, mode: "collector", collector: data }, res.ok ? 200 : 502);

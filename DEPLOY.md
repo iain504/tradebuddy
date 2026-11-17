@@ -194,11 +194,19 @@ docker compose logs mt4-gateway | grep -E "REP|PUSH|errors"
 ```bash
 docker compose ps                          # all four services Up/healthy
 docker compose logs -f collector           # per-cycle ingest summaries
-curl -s http://SERVER:3000/api/health      # app health
+curl -s http://SERVER:3000/api/health      # app + pipeline health (see below)
 curl -s http://SERVER:8000 -H '' 2>/dev/null || true   # (collector is internal)
 docker compose exec collector curl -s localhost:8000/health
 ```
 
+- **Pipeline status in the UI**: `GET /api/health` now includes a live
+  snapshot from the collector - `collector.ok`, `collector.lastCycle`, and
+  per-platform gateway probes (`collector.gateways.mt4` with the terminal
+  bridge state, `collector.gateways.mt5`). The dashboard footer renders these
+  as status chips ("Collector live / MT4 terminal attached / MT5 gateway
+  online"), and the amber demo banner only appears when the collector is not
+  configured or unreachable. The collector's `/health` probes each gateway
+  every ~30s in a background thread, so the endpoint stays fast.
 - **Poll tuning**: 1-5 minutes is comfortable. Brokers throttle or lock
   accounts for hammering; the collector already jitters each account and
   backs off exponentially on failures. Do not set `POLL_MINUTES < 1`.

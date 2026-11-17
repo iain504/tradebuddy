@@ -98,6 +98,10 @@ app.use(express.json({ limit: "1mb" }));
 const pool = new Map(); // login -> { client, ready, connectedAt }
 let ready = false;
 let connectedSince = null;
+// Whether the ZeroMQ bridge has EVER connected in this process lifetime.
+// Used to fail fast when the terminal was clearly never set up (full wait
+// only makes sense while a known-good terminal restarts).
+let everConnected = false;
 
 function bridgeClient() {
   const key = CONFIG.gatewayLogin || "__terminal__";
@@ -110,6 +114,7 @@ function bridgeClient() {
     });
     client.onConnect(() => {
       ready = true;
+      everConnected = true;
       connectedSince = new Date().toISOString();
       console.log(`[bridge] connected ${CONFIG.reqUrl} / ${CONFIG.pullUrl}`);
     });
@@ -136,7 +141,10 @@ function bridgeReady() {
 }
 
 async function waitForBridge(timeoutMs = CONFIG.bridgeConnectTimeoutMs) {
-  const deadline = Date.now() + timeoutMs;
+  // Terminal never attached in this process lifetime -> short fail-fast so
+  // callers get the setup hint quickly instead of a long hang.
+  const effective = everConnected ? timeoutMs : Math.min(timeoutMs, 2500);
+  const deadline = Date.now() + effective;
   while (Date.now() < deadline) {
     if (bridgeReady()) return true;
     await new Promise((r) => setTimeout(r, 250));

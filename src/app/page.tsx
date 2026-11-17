@@ -261,9 +261,28 @@ export default function HomePage() {
         onRefresh={() => void handleRefresh()}
         refreshing={refreshing}
       />
-      {health && !health.collectorConfigured && !bannerDismissed && (
-        <DemoBanner onDismiss={() => setBannerDismissed(true)} />
-      )}
+      {(() => {
+        // Banner only when the pipeline is degraded: collector not configured,
+        // or configured but not answering.
+        if (!health || bannerDismissed) return null;
+        if (!health.collectorConfigured) {
+          return (
+            <DemoBanner
+              variant="not-configured"
+              onDismiss={() => setBannerDismissed(true)}
+            />
+          );
+        }
+        if (!health.collector) {
+          return (
+            <DemoBanner
+              variant="unreachable"
+              onDismiss={() => setBannerDismissed(true)}
+            />
+          );
+        }
+        return null;
+      })()}
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-5 sm:px-6 sm:py-6">
         {accountsLoading ? (
@@ -332,10 +351,7 @@ export default function HomePage() {
         )}
       </main>
 
-      <Footer
-        collectorConfigured={health ? health.collectorConfigured : null}
-        lastDataAt={lastDataAt}
-      />
+      <Footer health={health} lastDataAt={lastDataAt} />
 
       <AddAccountDialog
         open={addOpen}

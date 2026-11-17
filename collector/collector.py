@@ -365,6 +365,54 @@ class Collector:
 
 
 # --------------------------------------------------------------------------- #
+# Gateway health probing (surfaced via GET /health)
+# --------------------------------------------------------------------------- #
+
+_probe_lock = threading.Lock()
+_probe_state: dict = {"mt4": None, "mt5": None, "updatedAt": None}
+
+
+def _probe_urls(urls: list) -> dict:
+    """Probe every configured gateway URL for a platform. ok = any reachable."""
+    if not urls:
+        return {"ok": False, "error": "no gateway URL configured", "urls": []}
+    results = []
+    for u in urls:
+        try:
+            r = requests.get(f"{u}/health", timeout=2.5)
+            data = r.json() if (r.content or b"") else {}
+            entry = {"url": u, "ok": bool(r.ok)}
+            if "bridge" in data:            # mt4-gateway reports terminal state
+                entry["bridge"] = data.get("bridge")
+            results.append(entry)
+        except Exception as exc:
+            results.append({"url": u, "ok": False, "error": str(exc)[:120]})
+    return {"ok": any(x.get("ok") for x in results), "urls": results}
+
+
+def _probe_cycle() -> None:
+    state = {
+        "mt4": _probe_urls(MT4_GATEWAY_URLS),
+        "mt5": _probe_urls(MT5_GATEWAY_URLS),
+        "updatedAt": now_iso(),
+    }
+    with _probe_lock:
+        _probe_state.clear()
+        _probe_state.update(state)
+
+
+def _gateway_probe_loop() -> None:
+    """Refresh gateway health every ~30s in the background so /health itself
+    always answers instantly (serving slightly stale state is fine)."""
+    while True:
+        try:
+            _probe_cycle()
+        except Exception as exc:  # never die
+            log.warning("gateway probe failed: %s", exc)
+        time.sleep(30)
+
+
+# --------------------------------------------------------------------------- #
 # Tiny HTTP server (/health, /sync, /test)
 # --------------------------------------------------------------------------- #
 
@@ -419,10 +467,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path.split("?")[0] == "/health":
+            with _probe_lock:
+                gateways = dict(_probe_state)
             self._send(200, {
                 "ok": True,
                 "accounts": collector.accounts_count,
                 "lastCycle": collector.last_cycle,
+                "gateways": gateways,
             })
         else:
             self._send(404, {"ok": False, "error": "Not found"})
@@ -478,6 +529,8 @@ def main() -> int:
     server_thread = threading.Thread(target=httpd.serve_forever,
                                      name="http", daemon=True)
     server_thread.start()
+    threading.Thread(target=_gateway_probe_loop,
+                     name="gateway-probe", daemon=True).start()
     log.info("collector up: app=%s poll=%.1fmin mt4=%s mt5=%s http=:%d",
              APP_URL, POLL_MINUTES, MT4_GATEWAY_URLS, MT5_GATEWAY_URLS,
              COLLECTOR_PORT)

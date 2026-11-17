@@ -9,9 +9,34 @@ import type {
 export const RANGES = ["1M", "3M", "6M", "1Y", "ALL"] as const;
 export type ReportRange = (typeof RANGES)[number];
 
+export interface GatewayProbeUrlDTO {
+  url: string;
+  ok: boolean;
+  bridge?: string | null;
+  error?: string;
+}
+
+export interface GatewayProbeDTO {
+  ok: boolean;
+  error?: string;
+  urls: GatewayProbeUrlDTO[];
+}
+
+export interface CollectorHealthDTO {
+  ok: boolean;
+  accounts: number;
+  lastCycle: string | null;
+  gateways: {
+    mt4: GatewayProbeDTO | null;
+    mt5: GatewayProbeDTO | null;
+    updatedAt: string | null;
+  };
+}
+
 export interface HealthDTO {
   ok: boolean;
   collectorConfigured: boolean;
+  collector?: CollectorHealthDTO | null;
 }
 
 export interface SyncResultDTO {

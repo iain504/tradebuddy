@@ -40,6 +40,9 @@ db/*.db
 # sandbox platform scripts
 .zscripts/
 
+# sandbox runtime services (the Docker deployment runs these via docker-compose)
+mini-services/
+
 # vercel
 .vercel
 
