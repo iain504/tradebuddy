@@ -40,12 +40,36 @@ if [ ! -f "$WINEPREFIX/system.reg" ]; then
 fi
 
 # --------------------------------------------------------------------------- #
+# 2b. Install the terminal when missing (build-time install can be skipped on
+#     fresh volumes / flaky CDNs). Tries MetaQuotes' Wine-packaged installer
+#     (mt5ubuntu.exe) first, then the generic web installer.
+# --------------------------------------------------------------------------- #
+MT5_INSTALL="$WINEPREFIX/drive_c/Program Files/MetaTrader 5"
+TERMINAL="$MT5_INSTALL/terminal64.exe"
+if [ ! -f "$TERMINAL" ]; then
+  for inst in /opt/downloads/mt5ubuntu.exe /opt/downloads/mt5setup.exe; do
+    [ -f "$inst" ] || continue
+    log "terminal64.exe missing - trying silent install: $(basename "$inst") /auto"
+    wine "$inst" /auto >/tmp/mt5-install.log 2>&1 || true
+    for _ in $(seq 1 180); do
+      [ -f "$TERMINAL" ] && break
+      sleep 5
+    done
+    [ -f "$TERMINAL" ] && { log "MT5 installed via $(basename "$inst")"; break; }
+    log "$(basename "$inst") did not produce terminal64.exe (see /tmp/mt5-install.log)"
+  done
+  if [ ! -f "$TERMINAL" ]; then
+    log "WARNING: MT5 terminal is not installed - the bridge will answer /health but snapshots will fail."
+    log "MetaQuotes installers are unreliable under Wine. Agent mode (agents/README.md) is the recommended data path."
+  fi
+fi
+
+# --------------------------------------------------------------------------- #
 # 3. Broker server files (*.srv) drop-in
 #    Operator puts broker .srv files into /opt/mt5/srv (bind or docker cp into
 #    the mt5data volume). They are copied into the terminal's Config/servers
 #    so mt5.initialize(server:"<label>") resolves the broker by label.
 # --------------------------------------------------------------------------- #
-MT5_INSTALL="$WINEPREFIX/drive_c/Program Files/MetaTrader 5"
 mkdir -p /opt/mt5/srv "$MT5_INSTALL/Config/servers"
 for srv in /opt/mt5/srv/*.srv; do
   [ -f "$srv" ] || continue

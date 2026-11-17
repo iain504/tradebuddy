@@ -27,7 +27,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       ok: true,
       mode: "queued",
       message:
-        "Collector is not configured on this instance. The account is stored and will be polled as soon as the collector service runs (see DEPLOY.md).",
+        "This instance runs in agent mode (no pull collector). Data arrives when the TradeBuddy EA / MT5 agent next to your terminal pushes a snapshot - no action needed.",
     });
   }
 

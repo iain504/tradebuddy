@@ -208,11 +208,35 @@ export interface IngestTrade {
 }
 
 export interface IngestPayload {
-  accountId: string;
+  accountId?: string;
+  /** Agent mode: resolve the account by login instead of the internal id. */
+  login?: string;
+  platform?: Platform;
+  /** Broker server label/host (disambiguates when the same login exists twice). */
+  server?: string;
   ts?: string;
   accountInfo: IngestAccountInfo;
   positions: IngestPosition[];
   trades: IngestTrade[];
   status?: AccountStatus;
   error?: string | null;
+}
+
+export interface AgentAccountDTO {
+  id: string;
+  login: string;
+  platform: Platform;
+  brokerName: string;
+  serverName: string | null;
+  status: AccountStatus;
+  lastSyncAt: string | null;
+}
+
+export interface AgentConfigDTO {
+  ok: boolean;
+  ingestUrl: string;
+  tokenRequired: boolean;
+  /** Only present when EXPOSE_INGEST_TOKEN=1 (self-host convenience). */
+  token?: string;
+  accounts: AgentAccountDTO[];
 }

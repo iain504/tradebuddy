@@ -17,6 +17,7 @@ import {
   type SyncResultDTO,
 } from "@/components/dashboard/api";
 import { AggregateView } from "@/components/dashboard/AggregateView";
+import { AgentOnboarding } from "@/components/dashboard/AgentOnboarding";
 import { DemoBanner } from "@/components/dashboard/DemoBanner";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Footer } from "@/components/dashboard/Footer";
@@ -262,13 +263,12 @@ export default function HomePage() {
         refreshing={refreshing}
       />
       {(() => {
-        // Banner only when the pipeline is degraded: collector not configured,
-        // or configured but not answering.
+        // Banner only when the pipeline is degraded: no collector configured
+        // (-> agent mode onboarding) or configured but not answering.
         if (!health || bannerDismissed) return null;
         if (!health.collectorConfigured) {
           return (
-            <DemoBanner
-              variant="not-configured"
+            <AgentOnboarding
               onDismiss={() => setBannerDismissed(true)}
             />
           );

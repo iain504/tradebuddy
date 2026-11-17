@@ -1,5 +1,20 @@
 # ============================================================================
-# mt-monitor - docker compose
+# TradeBuddy - docker compose
+#
+# TWO DATA MODES:
+#
+#   1. AGENT MODE (default, recommended) - `docker compose up -d`
+#      Only the `app` service runs. Install a push agent next to each MT4/MT5
+#      terminal (see agents/README.md); agents POST snapshots to /api/ingest.
+#      No Wine, no MetaQuotes installers, nothing else to break.
+#
+#   2. PULL MODE (server-side collection) - `docker compose --profile pull up -d`
+#      Adds the Python collector + optional Wine MT4/MT5 gateway containers.
+#      The collector polls every account and needs a reachable gateway per
+#      platform. The Wine gateways are EXPERIMENTAL: the MetaQuotes terminal
+#      installers are not reliably scriptable under Wine (MT5's web installer
+#      can abort with 0x50000018; MT4 first boot can take >10 minutes in
+#      "health: starting" while Wine initializes). Prefer agent mode.
 #
 # SECURITY - READ BEFORE EXPOSING ANYTHING:
 #   * NEVER expose /api/collect/accounts publicly. It returns account logins
@@ -7,11 +22,11 @@
 #     a server-side secret). Put the whole UI behind a reverse proxy with
 #     authentication (basic auth, SSO, Tailscale/WireGuard VPN, ...).
 #   * Use strong, unique ENCRYPTION_KEY and INGEST_TOKEN values (see .env.example).
-#   * Collector (/sync, /test) and gateways have no browser-facing auth - keep
-#     them on the internal compose network; do not publish their ports unless
-#     you front them with auth.
-#   * Investor (read-only) passwords are mandatory for accounts you add:
-#     the gateways could place trades with master passwords.
+#   * The ingest token is what agents/collector authenticate with - keep it
+#     secret. Set EXPOSE_INGEST_TOKEN=1 only on private instances so the
+#     dashboard can show copy-paste ready agent inputs.
+#   * Investor (read-only) passwords are mandatory for accounts you add via
+#     pull mode; agents only ever need the investor password locally.
 # ============================================================================
 
 services:
@@ -24,8 +39,15 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (see .env.example)}
       INGEST_TOKEN: ${INGEST_TOKEN:?Set INGEST_TOKEN in .env (see .env.example)}
       POLL_MINUTES: ${POLL_MINUTES:-5}
-      COLLECTOR_URL: http://collector:8000
-      APP_URL: http://app:3000
+      # Agent mode helpers:
+      #   PUBLIC_APP_URL: absolute base URL agents should use (optional -
+      #   /api/agent/config otherwise derives it from proxy headers).
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-}
+      #   EXPOSE_INGEST_TOKEN=1 lets the dashboard show the token in the
+      #   agent setup guide. Keep 0 when strangers can reach the UI.
+      EXPOSE_INGEST_TOKEN: ${EXPOSE_INGEST_TOKEN:-0}
+      # Pull mode only (harmless when the collector service is absent):
+      COLLECTOR_URL: ${COLLECTOR_URL:-http://collector:8000}
     ports:
       - "3000:3000"
     volumes:
@@ -40,7 +62,9 @@ services:
     stop_grace_period: 10s
 
   # ------------------------------------------------------------ collector ---
+  # PULL MODE ONLY: enable with `docker compose --profile pull up -d`
   collector:
+    profiles: ["pull"]
     build: ./collector
     image: mt-monitor-collector
     environment:
@@ -62,11 +86,12 @@ services:
     restart: unless-stopped
 
   # --------------------------------------------------------- mt4-gateway ---
-  # Wine + MT4 terminal + ZeroMQ bridge EA + Node app.
-  # One container serves ONE MT4 account (terminal limitation). The terminal,
-  # its login and the compiled EA persist in the mt4data volume; the first
-  # boot runs the one-time setup (downloads MT4, compiles the EA).
+  # PULL MODE ONLY (experimental). Wine + MT4 terminal + ZeroMQ bridge EA +
+  # Node app. One container serves ONE MT4 account (terminal limitation).
+  # First boot downloads MT4, compiles the EA and can sit in "health:
+  # starting" for 10+ minutes while Wine initializes - that is normal once.
   mt4-gateway:
+    profiles: ["pull"]
     build: ./gateways/mt4-gateway
     image: mt-monitor-mt4-gateway
     environment:
@@ -90,15 +115,16 @@ services:
       interval: 30s
       timeout: 5s
       # first boot downloads MT4 + compiles the bridge EA inside the volume
-      start_period: 10m
+      start_period: 12m
       retries: 5
     restart: unless-stopped
     stop_grace_period: 30s
 
   # --------------------------------------------------------- mt5-gateway ---
-  # Wine + official MT5 terminal + Windows Python FastAPI bridge.
-  # Connects accounts SEQUENTIALLY (one terminal); first image build ~10 min.
+  # PULL MODE ONLY (experimental). Wine + official MT5 terminal + Windows
+  # Python FastAPI bridge. Connects accounts SEQUENTIALLY (one terminal).
   mt5-gateway:
+    profiles: ["pull"]
     build: ./gateways/mt5-gateway
     image: mt-monitor-mt5-gateway
     environment:
@@ -115,7 +141,7 @@ services:
       interval: 30s
       timeout: 5s
       # fresh mt5data volume: wine prefix init + terminal warm-up on first boot
-      start_period: 8m
+      start_period: 10m
       retries: 5
     restart: unless-stopped
     stop_grace_period: 30s

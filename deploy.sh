@@ -2,25 +2,27 @@
 #
 # TradeBuddy one-command deployment bootstrap.
 #
-#   ./deploy.sh              generate .env if missing (random secrets), build
-#                            images, start the stack, wait for health
-#   ./deploy.sh --no-build   start without rebuilding images
-#   ./deploy.sh --pull       future: reserved (currently a no-op)
+#   ./deploy.sh               agent mode (default): .env with random secrets if
+#                             missing, build + start the app, wait for health
+#   ./deploy.sh --no-build    start without rebuilding images
+#   ./deploy.sh --pull        pull mode: ALSO start the Python collector and
+#                             the experimental Wine MT4/MT5 gateways
+#                             (x86_64 only; see README "Pull mode")
 #
-# Everything after this script is first-time setup of the two MetaTrader
-# gateways, documented in README.md ("First-time MT4 setup" / "First-time
-# MT5 setup") and DEPLOY.md.
+# After this script: connect your terminals with the push agents - README.md
+# ("First-time MT4 setup" / "First-time MT5 setup") and agents/README.md.
 
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 NO_BUILD=0
+PULL_MODE=0
 for arg in "$@"; do
   case "$arg" in
     --no-build) NO_BUILD=1 ;;
-    --pull) : ;; # reserved
-    *) echo "unknown option: $arg (supported: --no-build)"; exit 1 ;;
+    --pull)     PULL_MODE=1 ;;
+    *) echo "unknown option: $arg (supported: --no-build, --pull)"; exit 1 ;;
   esac
 done
 
@@ -31,9 +33,15 @@ die()  { echo -e "\033[1;31m[deploy]\033[0m $*" >&2; exit 1; }
 # --------------------------------------------------------------------------- #
 # 0. Host requirements
 # --------------------------------------------------------------------------- #
-[ "$(uname -m)" = "x86_64" ] || die "This stack needs x86_64 (the Wine-based MT4/MT5 gateways do not build on $(uname -m))."
 command -v docker >/dev/null 2>&1 || die "Docker is not installed. See https://docs.docker.com/engine/install/"
 docker compose version >/dev/null 2>&1 || die "Docker compose plugin missing. Install docker-compose-plugin (Docker 24+) or docker-compose v2."
+
+if [ "$PULL_MODE" = "1" ]; then
+  [ "$(uname -m)" = "x86_64" ] || die "--pull mode needs x86_64 (the Wine-based MT4/MT5 gateways do not build on $(uname -m)). Use agent mode instead."
+  warn "pull mode builds two Wine images with official MetaTrader installers -"
+  warn "these are NOT reliably scriptable (MT5 can abort with 0x50000018)."
+  warn "Agent mode is the recommended data path; continuing anyway."
+fi
 
 # --------------------------------------------------------------------------- #
 # 1. .env - generate once with strong random secrets
@@ -56,22 +64,25 @@ if [ ! -f .env ]; then
 ENCRYPTION_KEY=${ENCRYPTION_KEY_VALUE}
 INGEST_TOKEN=${INGEST_TOKEN_VALUE}
 
+# --- agent mode (default data path - see agents/README.md) ------------------
+# 1 = the dashboard "Setup guide" shows INGEST_TOKEN with copy buttons.
+# Keep 0 when people you don't trust can reach the dashboard.
+EXPOSE_INGEST_TOKEN=1
+# Absolute base URL agents should use (optional; auto-detected when unset):
+# PUBLIC_APP_URL=https://tradebuddy.example.com
+
 # --- optional (defaults shown) ----------------------------------------------
 # DATABASE_URL=file:/data/monitor.db
 POLL_MINUTES=5
 COLLECTION_JITTER_SECONDS=20
 
-# --- MT4 gateway -------------------------------------------------------------
-# Login flags applied at terminal start (one MT4 terminal = one account).
-# Leave empty to log in manually once - the session persists in the volume.
+# --- pull mode only (docker compose --profile pull up -d) -------------------
 MT4_GATEWAY_LOGIN=
 MT4_LOGIN=
 MT4_PASSWORD=
 MT4_SERVER=
 MT4_HISTORY_CMD=
 MT4_BRIDGE_API_KEY=${BRIDGE_KEY_VALUE}
-
-# --- gateway routing overrides ----------------------------------------------
 # MT4_GATEWAY_URL=http://mt4-gateway:8001
 # MT5_GATEWAY_URL=http://mt5-gateway:8002
 EOF
@@ -86,12 +97,14 @@ fi
 # --------------------------------------------------------------------------- #
 # 2. Build + start
 # --------------------------------------------------------------------------- #
-if [ "$NO_BUILD" = "1" ]; then
-  log "starting stack (no rebuild)"
-  docker compose up -d
+COMPOSE_ARGS=(-d)
+[ "$NO_BUILD" = "0" ] && COMPOSE_ARGS+=(--build)
+if [ "$PULL_MODE" = "1" ]; then
+  log "building + starting pull-mode stack (app, collector + Wine gateways)"
+  docker compose --profile pull up "${COMPOSE_ARGS[@]}"
 else
-  log "building + starting stack (app ~3-5 min; gateway images ~10 min each on first build)"
-  docker compose up -d --build
+  log "building + starting agent-mode stack (app only; collector/gateways live behind --profile pull)"
+  docker compose up "${COMPOSE_ARGS[@]}"
 fi
 
 # --------------------------------------------------------------------------- #
@@ -106,25 +119,44 @@ done
 [ "$APP_OK" = "1" ] || die "app did not become healthy - run: docker compose logs app"
 
 log "stack is up:"
-docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
+docker compose --profile pull ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'
 
 # --------------------------------------------------------------------------- #
 # 4. First-run pointers
 # --------------------------------------------------------------------------- #
-cat <<EOF
+if [ "$PULL_MODE" = "1" ]; then
+  cat <<EOF
 
-Next steps
-==========
-1. Open the UI:          http://$(hostname -I 2>/dev/null | awk '{print $1}'):3000  (put it behind an authenticated reverse proxy or VPN before real use)
-2. Load the demo portfolio in the UI to explore without any broker.
-3. MT4 gateway:          docker compose logs -f mt4-gateway
-                         first boot auto-installs MT4 + compiles the bridge EA.
-                         Then set MT4_LOGIN/MT4_PASSWORD/MT4_SERVER in .env and
-                         'docker compose up -d' again - or log in manually once.
-4. MT5 gateway:          docker compose logs -f mt5-gateway
-                         accounts connect by server label - no login config
-                         needed in .env.
-5. Add accounts in the UI with the INVESTOR (read-only) password.
+Next steps (pull mode)
+======================
+1. Open the UI:          http://$(hostname -I 2>/dev/null | awk '{print $1}'):3000
+                         (put it behind an authenticated reverse proxy or VPN first)
+2. MT4 gateway:          docker compose logs -f mt4-gateway
+                         first boot auto-installs MT4 + compiles the bridge EA
+                         (can take 10+ minutes in "health: starting" once).
+3. MT5 gateway:          docker compose logs -f mt5-gateway
+4. Add accounts in the UI with the INVESTOR (read-only) password.
+5. If a Wine gateway keeps failing, switch to agent mode - agents/README.md.
 
 Full runbook: DEPLOY.md - first-time setup: README.md
 EOF
+else
+  cat <<EOF
+
+Next steps (agent mode)
+=======================
+1. Open the UI:          http://$(hostname -I 2>/dev/null | awk '{print $1}'):3000
+                         (put it behind an authenticated reverse proxy or VPN first)
+2. Click "Setup guide" in the dashboard banner - it shows your IngestURL and
+   IngestToken with copy buttons.
+3. On the machine where your MT4/MT5 terminal runs, install the TradeBuddy EA
+   (or the MT5 python agent) - step-by-step: agents/README.md
+4. Add the account in the UI with the same login + broker server and the
+   INVESTOR (read-only) password; the agent matches it automatically.
+
+Optional pull mode (server-side collector + Wine gateways):
+   docker compose --profile pull up -d --build
+
+Full runbook: DEPLOY.md - first-time setup: README.md / agents/README.md
+EOF
+fi

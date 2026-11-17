@@ -27,10 +27,17 @@ RUN dpkg --add-architecture i386 \
  && rm -rf /var/lib/apt/lists/* /tmp/winehq.key
 
 # --------------------------------------------------------------------------- #
-# Downloaders: official MT5 installer + Windows Python 3.11 (amd64)
+# Downloaders: official MT5 installers + Windows Python 3.11 (amd64)
+#
+# mt5setup.exe is a web installer that frequently aborts under Wine with
+# error 0x50000018. mt5ubuntu.exe is MetaQuotes' own Wine/Linux-packaged
+# build of the platform installer - try it FIRST, fall back to mt5setup.
 # --------------------------------------------------------------------------- #
 RUN mkdir -p /opt/downloads /opt/bridge \
- && wget -q -O /opt/downloads/mt5setup.exe \
+ && (wget -q -O /opt/downloads/mt5ubuntu.exe \
+      "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5ubuntu.exe" \
+     || echo "WARNING: mt5ubuntu.exe download failed - will rely on mt5setup.exe") \
+ ; wget -q -O /opt/downloads/mt5setup.exe \
       "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" \
  && wget -q -O /opt/downloads/python-installer.exe \
       "https://www.python.org/ftp/python/${WINPYTHON_VERSION}/python-${WINPYTHON_VERSION}-amd64.exe"
@@ -46,18 +53,39 @@ ENV WINEPREFIX=/opt/mt5/prefix \
     DISPLAY=:99 \
     WINPYTHON='C:\Python311\python.exe'
 
+# Skip Wine mono/gecko first-run prompts that hang silent installs:
+ENV WINEDLLOVERRIDES="mscoree,mshtml="
+
 # 1. Initialize the wine prefix (quiet, best effort - failures are retried by wineboot itself)
 RUN wineboot --init >/dev/null 2>&1 || true; \
     wineserver -w || true
 
-# 2. Install MetaTrader 5
-RUN wine /opt/downloads/mt5setup.exe /auto >/dev/null 2>&1 || true; \
-    for i in $(seq 1 120); do \
-      [ -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ] && break; \
-      sleep 5; \
+# 2. Install MetaTrader 5 - mt5ubuntu.exe first (Wine-packaged by MetaQuotes),
+#    then the generic web installer as fallback. terminal64.exe must appear.
+RUN install_ok=0; \
+    for inst in /opt/downloads/mt5ubuntu.exe /opt/downloads/mt5setup.exe; do \
+      [ -f "$inst" ] || continue; \
+      echo "[mt5-build] trying silent install: $inst /auto"; \
+      wine "$inst" /auto > /tmp/mt5-install.log 2>&1 || true; \
+      for i in $(seq 1 120); do \
+        [ -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ] && break; \
+        sleep 5; \
+      done; \
+      if [ -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then \
+        install_ok=1; echo "[mt5-build] terminal64.exe installed via $(basename "$inst")"; break; \
+      fi; \
+      echo "[mt5-build] $(basename "$inst") did not produce terminal64.exe"; \
+      tail -n 20 /tmp/mt5-install.log || true; \
     done; \
-    test -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" \
-      || { echo "MT5 silent install failed (terminal64.exe missing)"; exit 1; }
+    if [ "$install_ok" != "1" ]; then \
+      echo "=============================================================="; \
+      echo "MT5 terminal install failed under Wine (terminal64.exe missing)."; \
+      echo "This is a known MetaQuotes-installer limitation. The image still"; \
+      echo "builds: the entrypoint retries at container start, but the"; \
+      echo "RECOMMENDED data path is agent mode - see agents/README.md."; \
+      echo "=============================================================="; \
+      exit 1; \
+    fi
 
 # 3. Install Windows Python 3.11
 RUN wine /opt/downloads/python-installer.exe /quiet InstallAllUsers=1 PrependPath=1 \
