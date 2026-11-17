@@ -82,6 +82,16 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    # /health always answers 200 once the Node server is up (bridge state is
+    # reported in the payload, not the status code) - so this check means
+    # "gateway process reachable", not "terminal logged in".
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      interval: 30s
+      timeout: 5s
+      # first boot downloads MT4 + compiles the bridge EA inside the volume
+      start_period: 10m
+      retries: 5
     restart: unless-stopped
     stop_grace_period: 30s
 
@@ -100,10 +110,17 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8002/health"]
+      interval: 30s
+      timeout: 5s
+      # fresh mt5data volume: wine prefix init + terminal warm-up on first boot
+      start_period: 8m
+      retries: 5
     restart: unless-stopped
     stop_grace_period: 30s
 
 volumes:
   appdata:    # SQLite database (monitor.db) - BACK THIS UP
   mt4data:    # wine prefix + MT4 terminal + bridge EA + login state
-  mt5data:    # wine prefix + MT5 terminal
+  mt5data:    # wine prefix + MT5 terminal; drop broker .srv files at /opt/mt5/srv

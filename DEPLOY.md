@@ -73,6 +73,16 @@ Data flow per cycle:
 
 ## 3. Quick start
 
+One command (generates `.env` with random secrets, builds, starts, waits for
+health):
+
+```bash
+./deploy.sh
+# restart without rebuilding: ./deploy.sh --no-build
+```
+
+Manual equivalent:
+
 ```bash
 cp .env.example .env
 # EDIT .env: set strong ENCRYPTION_KEY and INGEST_TOKEN
@@ -157,10 +167,17 @@ docker compose logs mt4-gateway | grep -E "REP|PUSH|errors"
   keep `POLL_MINUTES >= 3`; for more, run replicas and split accounts by
   giving the collector a comma-separated `MT5_GATEWAY_URL` list - assignment
   is deterministic (crc32 of accountId), so accounts stick to their gateway.
-- Broker `.srv` installation for label resolution:
+- Broker `.srv` installation for label resolution - easiest is the drop-in
+  directory (picked up on every gateway start):
 
   ```bash
-  # on the host:
+  docker compose cp mybroker.srv mt5-gateway:/opt/mt5/srv/
+  docker compose restart mt5-gateway
+  ```
+
+  Manual alternative:
+
+  ```bash
   docker compose cp mybroker.srv mt5-gateway:/tmp/
   docker compose exec mt5-gateway bash -c \
     'cp /tmp/mybroker.srv "/opt/mt5/prefix/drive_c/Program Files/MetaTrader 5/Config/servers/"'

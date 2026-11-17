@@ -40,7 +40,26 @@ if [ ! -f "$WINEPREFIX/system.reg" ]; then
 fi
 
 # --------------------------------------------------------------------------- #
-# 3. Optional terminal pre-start (warm-up: quotes, symbol base)
+# 3. Broker server files (*.srv) drop-in
+#    Operator puts broker .srv files into /opt/mt5/srv (bind or docker cp into
+#    the mt5data volume). They are copied into the terminal's Config/servers
+#    so mt5.initialize(server:"<label>") resolves the broker by label.
+# --------------------------------------------------------------------------- #
+MT5_INSTALL="$WINEPREFIX/drive_c/Program Files/MetaTrader 5"
+mkdir -p /opt/mt5/srv "$MT5_INSTALL/Config/servers"
+for srv in /opt/mt5/srv/*.srv; do
+  [ -f "$srv" ] || continue
+  cp -f "$srv" "$MT5_INSTALL/Config/servers/" 2>/dev/null || true
+  # Best-effort: also install into any per-user terminal data folders that
+  # exist already (created by the terminal itself on first run).
+  for datadir in "$WINEPREFIX"/drive_c/users/*/AppData/Roaming/MetaQuotes/Terminal/*/; do
+    [ -d "$datadir/config/servers" ] && cp -f "$srv" "$datadir/config/servers/" 2>/dev/null || true
+  done
+  log "installed broker server file $(basename "$srv")"
+done
+
+# --------------------------------------------------------------------------- #
+# 4. Optional terminal pre-start (warm-up: quotes, symbol base)
 # --------------------------------------------------------------------------- #
 if [ "$PRESTART" = "true" ] && [ -x "$TERMINAL" ]; then
   log "pre-starting MT5 terminal (MT5_PRESTART=true; disable with MT5_PRESTART=false)"
@@ -49,7 +68,7 @@ if [ "$PRESTART" = "true" ] && [ -x "$TERMINAL" ]; then
 fi
 
 # --------------------------------------------------------------------------- #
-# 4. Bridge API (Windows Python under Wine)
+# 5. Bridge API (Windows Python under Wine)
 # --------------------------------------------------------------------------- #
 cd /opt/bridge
 log "starting uvicorn (Windows Python under Wine) on 0.0.0.0:8002"
