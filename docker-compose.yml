@@ -46,8 +46,10 @@ services:
       #   EXPOSE_INGEST_TOKEN=1 lets the dashboard show the token in the
       #   agent setup guide. Keep 0 when strangers can reach the UI.
       EXPOSE_INGEST_TOKEN: ${EXPOSE_INGEST_TOKEN:-0}
-      # Pull mode only (harmless when the collector service is absent):
-      COLLECTOR_URL: ${COLLECTOR_URL:-http://collector:8000}
+      # Pull mode only: deploy.sh --pull adds COLLECTOR_URL to .env for you.
+      # Leave it UNSET in agent mode - a value here makes the dashboard hide
+      # the agent setup guide and show "collector unreachable" instead.
+      COLLECTOR_URL: ${COLLECTOR_URL:-}
     ports:
       - "3000:3000"
     volumes:

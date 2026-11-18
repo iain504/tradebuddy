@@ -1,15 +1,17 @@
 "use client";
 
-import { CandlestickChart, Plus, RefreshCw } from "lucide-react";
+import { CandlestickChart, Plus, Radio, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export function Header({
   onAddAccount,
+  onAgentSetup,
   onRefresh,
   refreshing,
 }: {
   onAddAccount: () => void;
+  onAgentSetup: () => void;
   onRefresh: () => void;
   refreshing: boolean;
 }) {
@@ -33,6 +35,16 @@ export function Header({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onAgentSetup}
+            aria-label="Open the MT4/MT5 agent setup guide"
+            className="border-emerald-400/30 text-emerald-300 hover:bg-emerald-400/10 hover:text-emerald-200"
+          >
+            <Radio className="size-4" />
+            <span className="hidden sm:inline">Agent setup</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"

@@ -77,6 +77,7 @@ POLL_MINUTES=5
 COLLECTION_JITTER_SECONDS=20
 
 # --- pull mode only (docker compose --profile pull up -d) -------------------
+# COLLECTOR_URL=http://collector:8000   (deploy.sh --pull adds this line for you)
 MT4_GATEWAY_LOGIN=
 MT4_LOGIN=
 MT4_PASSWORD=
@@ -100,6 +101,13 @@ fi
 COMPOSE_ARGS=(-d)
 [ "$NO_BUILD" = "0" ] && COMPOSE_ARGS+=(--build)
 if [ "$PULL_MODE" = "1" ]; then
+  # Pull mode needs the app to know where the collector lives (pipeline status
+  # + manual sync). Agent mode must NOT have it - otherwise the dashboard hides
+  # the agent setup guide behind a "collector unreachable" warning.
+  if ! grep -q "^COLLECTOR_URL=.\+" .env; then
+    log "adding COLLECTOR_URL=http://collector:8000 to .env (pull mode)"
+    echo "COLLECTOR_URL=http://collector:8000" >> .env
+  fi
   log "building + starting pull-mode stack (app, collector + Wine gateways)"
   docker compose --profile pull up "${COMPOSE_ARGS[@]}"
 else
@@ -147,8 +155,8 @@ Next steps (agent mode)
 =======================
 1. Open the UI:          http://$(hostname -I 2>/dev/null | awk '{print $1}'):3000
                          (put it behind an authenticated reverse proxy or VPN first)
-2. Click "Setup guide" in the dashboard banner - it shows your IngestURL and
-   IngestToken with copy buttons.
+2. Click "Agent setup" in the header (or "Setup guide" in the green banner) -
+   it shows your IngestURL and IngestToken with copy buttons.
 3. On the machine where your MT4/MT5 terminal runs, install the TradeBuddy EA
    (or the MT5 python agent) - step-by-step: agents/README.md
 4. Add the account in the UI with the same login + broker server and the

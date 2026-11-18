@@ -80,9 +80,10 @@ cd tradebuddy
    the legacy collector + Wine gateway stack)
 4. waits for the app to report healthy, then prints status + next steps
 
-Open `http://SERVER:3000`. The green **Setup guide** button in the dashboard
-banner shows your exact agent settings with copy buttons. Load the demo
-portfolio to explore the UI, then connect real accounts below.
+Open `http://SERVER:3000`. The **Agent setup** button in the header (and the
+green banner's **Setup guide** button) shows your exact agent settings with
+copy buttons. Load the demo portfolio to explore the UI, then connect real
+accounts below.
 
 ## First-time MT4 setup (agent mode)
 
@@ -169,7 +170,9 @@ If you want server-side collection instead of agents:
 ./deploy.sh --pull          # or: docker compose --profile pull up -d --build
 ```
 
-This adds the Python collector and the two Wine gateway containers. Honest
+This adds the Python collector and the two Wine gateway containers (`deploy.sh
+--pull` also writes `COLLECTOR_URL=http://collector:8000` into `.env` for the
+dashboard's pipeline status; manual compose runs should add it too). Honest
 caveats:
 
 - **MT5 gateway**: the MetaQuotes web installer frequently aborts under Wine
@@ -198,6 +201,7 @@ All via `.env` (see `.env.example`; `deploy.sh` generates the secrets):
 | `EXPOSE_INGEST_TOKEN` | `0` | `1` = the dashboard's Setup guide shows the token (copy-paste ready). Keep `0` on shared instances. |
 | `PUBLIC_APP_URL` | auto | Absolute base URL agents should use; auto-detected from proxy headers when unset. |
 | `POLL_MINUTES` | `5` | Pull-mode collection cycle length. |
+| `COLLECTOR_URL` | unset | App-side URL of the collector. **Agent mode: leave unset** (a value hides the agent setup guide). `deploy.sh --pull` sets it. |
 | `COLLECTION_JITTER_SECONDS` | `20` | Random per-account delay (pull mode). |
 | `MT4_LOGIN` / `MT4_PASSWORD` / `MT4_SERVER` | empty | Pull-mode MT4 start-flag login (one terminal = one account). |
 | `MT4_BRIDGE_API_KEY` | generated | Pull-mode MT4 gateway ↔ bridge EA key. |
@@ -240,7 +244,7 @@ docker compose cp app:/data/backup.db ./backup-$(date +%F).db
 
 | Symptom | Fix |
 |---|---|
-| Banner shows agent mode / accounts stay `PENDING` | Install the agent for that platform (Setup guide); check the EA chart comment / Experts tab |
+| Banner shows agent mode / accounts stay `PENDING` | Install the agent for that platform - click **Agent setup** in the header; check the EA chart comment / Experts tab |
 | EA: `WebRequest failed (4014/4060)` | URL not whitelisted - *Tools → Options → Expert Advisors*, scheme+host must match exactly |
 | EA: `HTTP 401` | Wrong `IngestToken` - copy from `.env` / Setup guide |
 | EA: `HTTP 404 No account matches login` | Add the account in the dashboard first (same login + platform) |

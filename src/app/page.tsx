@@ -18,6 +18,7 @@ import {
 } from "@/components/dashboard/api";
 import { AggregateView } from "@/components/dashboard/AggregateView";
 import { AgentOnboarding } from "@/components/dashboard/AgentOnboarding";
+import { AgentSetupDialog } from "@/components/dashboard/AgentSetupDialog";
 import { DemoBanner } from "@/components/dashboard/DemoBanner";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { Footer } from "@/components/dashboard/Footer";
@@ -45,6 +46,7 @@ export default function HomePage() {
   const [aggLoading, setAggLoading] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -259,29 +261,29 @@ export default function HomePage() {
       />
       <Header
         onAddAccount={() => setAddOpen(true)}
+        onAgentSetup={() => setSetupOpen(true)}
         onRefresh={() => void handleRefresh()}
         refreshing={refreshing}
       />
       {(() => {
-        // Banner only when the pipeline is degraded: no collector configured
-        // (-> agent mode onboarding) or configured but not answering.
-        if (!health || bannerDismissed) return null;
-        if (!health.collectorConfigured) {
-          return (
-            <AgentOnboarding
-              onDismiss={() => setBannerDismissed(true)}
-            />
-          );
+        // Agent mode is the default data path, so the onboarding banner is the
+        // default state - shown even while /api/health is still loading or
+        // failed (an unknown pipeline must not hide the EA setup guide).
+        // Only a pull-mode deployment (collector configured) swaps it for the
+        // "unreachable" warning, and a healthy collector hides both.
+        if (bannerDismissed) return null;
+        if (health?.collectorConfigured) {
+          if (!health.collector) {
+            return (
+              <DemoBanner
+                variant="unreachable"
+                onDismiss={() => setBannerDismissed(true)}
+              />
+            );
+          }
+          return null;
         }
-        if (!health.collector) {
-          return (
-            <DemoBanner
-              variant="unreachable"
-              onDismiss={() => setBannerDismissed(true)}
-            />
-          );
-        }
-        return null;
+        return <AgentOnboarding onDismiss={() => setBannerDismissed(true)} />;
       })()}
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 py-5 sm:px-6 sm:py-6">
@@ -359,6 +361,7 @@ export default function HomePage() {
         owners={owners}
         onCreated={(a) => void handleCreated(a)}
       />
+      <AgentSetupDialog open={setupOpen} onOpenChange={setSetupOpen} />
     </div>
   );
 }
