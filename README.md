@@ -9,6 +9,10 @@ Built for a single operator (or a small group) who wants their trading data
 out of spreadsheet limbo: **unlimited accounts and owners**, every snapshot
 kept, aggregate portfolio view across brokers and platforms.
 
+> **Agent mode.** Connect your MT4/MT5 terminals with a one-time push agent -
+> it sends snapshots and full trade history straight to this dashboard. No
+> Wine or gateway containers required.
+
 ## Features
 
 - **MT4 + MT5** accounts side by side, unlimited owners and accounts
